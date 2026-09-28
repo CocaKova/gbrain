@@ -194,8 +194,10 @@ The default task line is the model card's general-retrieval one. Override it, or
 
 ```bash
 gbrain config set embedding_query_instruct "Retrieve the personal note that answers the question"
-gbrain config set embedding_query_instruct ""    # send queries raw (not recommended for Qwen3)
+gbrain config set embedding_query_instruct ""    # send queries raw (see the trade-off below)
 ```
+
+The prefix is a trade, not a free win. On question-style queries against a larger brain it lifted every metric we measured (MRR 0.36 → 0.56 on ~1,100 pages). On a small corpus where queries are close paraphrases of a single passage, an independent run saw top-3 recall go up while top-1 dipped slightly and MRR stayed flat. If your queries look like the second case, set the key to `""`: that empty string is the only way to turn the prefix off, and because documents are never prefixed it takes effect immediately with no re-embed.
 
 gbrain also sends `input_type: query|document` on these requests. Ollama, llama-server and vLLM ignore the field; a custom OpenAI-compatible wrapper can use it to apply its own query handling.
 
