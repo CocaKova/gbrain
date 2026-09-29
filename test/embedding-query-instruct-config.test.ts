@@ -15,10 +15,9 @@ import { join } from 'node:path';
 import { KNOWN_CONFIG_KEYS, loadConfig } from '../src/core/config.ts';
 import { buildGatewayConfig } from '../src/core/ai/build-gateway-config.ts';
 import { FILE_PLANE_API_KEYS, FILE_PLANE_STRING_KEYS } from '../src/commands/config.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 let home = '';
-const savedHome = process.env.GBRAIN_HOME;
-const savedEnv = process.env.GBRAIN_EMBEDDING_QUERY_INSTRUCT;
 
 function writeConfig(extra: Record<string, unknown>): void {
   mkdirSync(join(home, '.gbrain'), { recursive: true });
@@ -34,17 +33,20 @@ function writeConfig(extra: Record<string, unknown>): void {
   );
 }
 
+/**
+ * Run `fn` with GBRAIN_HOME pointed at this test's temp dir and the env
+ * task line set to `instruct` (undefined = unset). withEnv restores both,
+ * so nothing leaks into other files sharing the shard process.
+ */
+function withConfigEnv(fn: () => void, instruct?: string): Promise<void> {
+  return withEnv({ GBRAIN_HOME: home, GBRAIN_EMBEDDING_QUERY_INSTRUCT: instruct }, fn);
+}
+
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'gbrain-qi-'));
-  process.env.GBRAIN_HOME = home;
-  delete process.env.GBRAIN_EMBEDDING_QUERY_INSTRUCT;
 });
 
 afterEach(() => {
-  if (savedHome === undefined) delete process.env.GBRAIN_HOME;
-  else process.env.GBRAIN_HOME = savedHome;
-  if (savedEnv === undefined) delete process.env.GBRAIN_EMBEDDING_QUERY_INSTRUCT;
-  else process.env.GBRAIN_EMBEDDING_QUERY_INSTRUCT = savedEnv;
   rmSync(home, { recursive: true, force: true });
 });
 
@@ -55,32 +57,39 @@ describe('#5543: embedding_query_instruct config plumbing', () => {
     expect(FILE_PLANE_API_KEYS).not.toContain('embedding_query_instruct');
   });
 
-  test('unset in file and env → undefined (gateway applies the family default)', () => {
+  test('unset in file and env → undefined (gateway applies the family default)', async () => {
     writeConfig({});
-    const cfg = loadConfig();
-    expect(cfg?.embedding_query_instruct).toBeUndefined();
-    expect(buildGatewayConfig(cfg!).embedding_query_instruct).toBeUndefined();
+    await withConfigEnv(() => {
+      const cfg = loadConfig();
+      expect(cfg?.embedding_query_instruct).toBeUndefined();
+      expect(buildGatewayConfig(cfg!).embedding_query_instruct).toBeUndefined();
+    });
   });
 
-  test('file-plane task line reaches the gateway config verbatim', () => {
+  test('file-plane task line reaches the gateway config verbatim', async () => {
     writeConfig({ embedding_query_instruct: 'Retrieve the note that answers the question' });
-    const cfg = loadConfig();
-    expect(buildGatewayConfig(cfg!).embedding_query_instruct).toBe('Retrieve the note that answers the question');
+    await withConfigEnv(() => {
+      const cfg = loadConfig();
+      expect(buildGatewayConfig(cfg!).embedding_query_instruct).toBe('Retrieve the note that answers the question');
+    });
   });
 
-  test('file-plane empty string survives as "" (disable), not undefined', () => {
+  test('file-plane empty string survives as "" (disable), not undefined', async () => {
     writeConfig({ embedding_query_instruct: '' });
-    const cfg = loadConfig();
-    expect(cfg?.embedding_query_instruct).toBe('');
-    expect(buildGatewayConfig(cfg!).embedding_query_instruct).toBe('');
+    await withConfigEnv(() => {
+      const cfg = loadConfig();
+      expect(cfg?.embedding_query_instruct).toBe('');
+      expect(buildGatewayConfig(cfg!).embedding_query_instruct).toBe('');
+    });
   });
 
-  test('GBRAIN_EMBEDDING_QUERY_INSTRUCT overrides the file, and an exported "" disables', () => {
+  test('GBRAIN_EMBEDDING_QUERY_INSTRUCT overrides the file, and an exported "" disables', async () => {
     writeConfig({ embedding_query_instruct: 'from the file' });
-    process.env.GBRAIN_EMBEDDING_QUERY_INSTRUCT = 'from the env';
-    expect(loadConfig()?.embedding_query_instruct).toBe('from the env');
-
-    process.env.GBRAIN_EMBEDDING_QUERY_INSTRUCT = '';
-    expect(loadConfig()?.embedding_query_instruct).toBe('');
+    await withConfigEnv(() => {
+      expect(loadConfig()?.embedding_query_instruct).toBe('from the env');
+    }, 'from the env');
+    await withConfigEnv(() => {
+      expect(loadConfig()?.embedding_query_instruct).toBe('');
+    }, '');
   });
 });
